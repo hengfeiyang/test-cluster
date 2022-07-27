@@ -1,29 +1,28 @@
 package rendezvous
 
 import (
-	"hash"
-	"hash/fnv"
-	"io"
 	"sort"
+	"sync"
 )
 
 type Rendezvous struct {
 	nodes map[string]int
 	nstr  []string
 	nhash []uint64
-	hash  hash.Hash64
+	hash  Hasher
+	lock  sync.RWMutex
 }
 
-type scoredNode struct {
+type scoreNode struct {
 	name  string
 	score uint64
 }
 
 func New() *Rendezvous {
-	return NewWithHash(fnv.New64a())
+	return NewWithHash(NewDefaultHasher())
 }
 
-func NewWithHash(hash hash.Hash64) *Rendezvous {
+func NewWithHash(hash Hasher) *Rendezvous {
 	return &Rendezvous{
 		nodes: make(map[string]int, 0),
 		nstr:  make([]string, 0),
@@ -33,19 +32,16 @@ func NewWithHash(hash hash.Hash64) *Rendezvous {
 }
 
 func (r *Rendezvous) Lookup(k string) string {
-	// short-circuit if we're empty
-	if len(r.nodes) == 0 {
-		return ""
-	}
-
 	khash := r.Hash(k)
 
-	var midx int
-	var mhash = xorshiftMult64(khash ^ r.nhash[0])
+	r.lock.RLock()
+	defer r.lock.RUnlock()
 
-	for i, nhash := range r.nhash[1:] {
+	var midx int
+	var mhash uint64
+	for i, nhash := range r.nhash {
 		if h := xorshiftMult64(khash ^ nhash); h > mhash {
-			midx = i + 1
+			midx = i
 			mhash = h
 		}
 	}
@@ -54,19 +50,15 @@ func (r *Rendezvous) Lookup(k string) string {
 }
 
 func (r *Rendezvous) LookupTopN(k string, n int) []string {
-	// short-circuit if we're empty
-	if len(r.nodes) == 0 {
-		return nil
-	}
-
 	khash := r.Hash(k)
 
-	scored := make([]scoredNode, len(r.nstr))
-
+	r.lock.RLock()
+	scored := make([]scoreNode, len(r.nstr))
 	for i, nhash := range r.nhash {
 		h := xorshiftMult64(khash ^ nhash)
-		scored[i] = scoredNode{name: r.nstr[i], score: h}
+		scored[i] = scoreNode{name: r.nstr[i], score: h}
 	}
+	r.lock.RUnlock()
 
 	sort.Slice(scored, func(i, j int) bool { return scored[i].score > scored[j].score })
 
@@ -77,13 +69,28 @@ func (r *Rendezvous) LookupTopN(k string, n int) []string {
 	return names
 }
 
+func (r *Rendezvous) Contains(node string) bool {
+	r.lock.RLock()
+	_, ok := r.nodes[node]
+	r.lock.RUnlock()
+	return ok
+}
+
 func (r *Rendezvous) Add(node string) {
+	if r.Contains(node) {
+		return
+	}
+
+	r.lock.Lock()
 	r.nodes[node] = len(r.nstr)
 	r.nstr = append(r.nstr, node)
 	r.nhash = append(r.nhash, r.Hash(node))
+	r.lock.Unlock()
 }
 
 func (r *Rendezvous) Remove(node string) {
+	r.lock.Lock()
+
 	// find index of node to remove
 	nidx := r.nodes[node]
 
@@ -99,17 +106,34 @@ func (r *Rendezvous) Remove(node string) {
 	delete(r.nodes, node)
 	moved := r.nstr[nidx]
 	r.nodes[moved] = nidx
+
+	r.lock.Unlock()
+}
+
+func (r *Rendezvous) List() []string {
+	r.lock.RLock()
+	ns := make([]string, len(r.nstr))
+	copy(ns, r.nstr)
+	r.lock.RUnlock()
+	return ns
+}
+
+func (r *Rendezvous) Len() int {
+	r.lock.RLock()
+	n := len(r.nstr)
+	r.lock.RUnlock()
+	return n
 }
 
 func (r *Rendezvous) Hash(name string) uint64 {
-	r.hash.Reset()
-	_, _ = io.WriteString(r.hash, name)
-	return r.hash.Sum64()
+	return r.hash.Sum64(name)
 }
 
 func xorshiftMult64(x uint64) uint64 {
-	x ^= x >> 12 // a
-	x ^= x << 25 // b
-	x ^= x >> 27 // c
-	return x * 2685821657736338717
+	// uses the "xorshift*" mix function which is simple and effective
+	// see: https://en.wikipedia.org/wiki/Xorshift#xorshift*
+	x ^= x >> 12
+	x ^= x << 25
+	x ^= x >> 27
+	return x * 0x2545F4914F6CDD1D
 }

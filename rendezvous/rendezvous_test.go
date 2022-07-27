@@ -33,7 +33,7 @@ func TestRendezvous_Lookup(t *testing.T) {
 				r.Add(node)
 			}
 			got := r.Lookup(tt.args.k)
-			assert.Equal(t, got, tt.want)
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
@@ -62,7 +62,26 @@ func TestRendezvous_LookupTopN(t *testing.T) {
 				r.Add(node)
 			}
 			gots := r.LookupTopN(tt.args.k, 10)
-			assert.Equal(t, gots, tt.want)
+			assert.Equal(t, tt.want, gots)
 		})
 	}
+}
+
+func TestRendezvous_List(t *testing.T) {
+	r := New()
+	for _, node := range nodes {
+		r.Add(node)
+		r.Add(node)
+	}
+	got := r.List()
+	assert.Equal(t, nodes, got)
+}
+
+func TestRendezvous_Len(t *testing.T) {
+	r := New()
+	for _, node := range nodes {
+		r.Add(node)
+	}
+	r.Add(nodes[1])
+	assert.Equal(t, len(nodes), r.Len())
 }
