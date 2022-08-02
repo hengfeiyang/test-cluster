@@ -66,6 +66,7 @@ func main() {
 		if err := cluster.Memberlist.Leave(time.Second * 5); err != nil {
 			panic(err)
 		}
+		cluster.EtcdClient.Leave(cluster.LocalNodeName)
 	}
 }
 

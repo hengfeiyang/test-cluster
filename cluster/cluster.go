@@ -8,15 +8,18 @@ import (
 	"strings"
 
 	"test-cluster/config"
+	"test-cluster/etcd"
 
 	"github.com/hashicorp/memberlist"
 	"github.com/rs/zerolog/log"
 )
 
 type Cluster struct {
-	meta         *meta
-	Memberlist   *memberlist.Memberlist
-	stopWatching chan bool
+	meta          *meta
+	Memberlist    *memberlist.Memberlist
+	stopWatching  chan bool
+	EtcdClient    *etcd.EtcdStorage
+	LocalNodeName string
 }
 
 type Item struct {
@@ -60,6 +63,10 @@ func (c *Cluster) Join() {
 	}
 	log.Printf("Joined the cluster: %d", n)
 	log.Printf("cluster is up. URL: %s", c.Memberlist.LocalNode().Address())
+
+	c.EtcdClient = etcd.New(config.Global.Etcd.Prefix)
+	c.EtcdClient.Join(cfg.Name)
+	c.LocalNodeName = cfg.Name
 }
 
 func (c *Cluster) Stop() error {
